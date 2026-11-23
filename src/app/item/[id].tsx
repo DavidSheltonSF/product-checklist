@@ -3,7 +3,10 @@ import * as ImagePicker from 'expo-image-picker';
 import { Stack, useLocalSearchParams, useRouter } from 'expo-router';
 import { useSQLiteContext } from 'expo-sqlite';
 import { useEffect, useState } from 'react';
-import { Alert, Pressable, ScrollView, StyleSheet, Text, TextInput, View } from 'react-native';
+import { GestureDetector, GestureHandlerRootView, usePinchGesture } from 'react-native-gesture-handler';
+import Animated, { useAnimatedStyle, useSharedValue } from 'react-native-reanimated';
+import { Alert, Modal, Pressable, ScrollView, StyleSheet, Text, TextInput, View } from 'react-native';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import type { Item } from '../../lib/db';
 import { deletePhoto, photoUri, savePhoto } from '../../lib/photos';
 import { deriveStatus, statusInfo } from '../../lib/status';
@@ -13,8 +16,52 @@ const UNITS = ['unidade', 'caixa', 'pacote', 'kit'];
 type Photo = { name: string | null; tempUri: string | null };
 const digits = (t: string) => t.replace(/\D/g, '');
 
+function PhotoViewer({ uri, visible, onClose }: { uri: string | null; visible: boolean; onClose: () => void }) {
+  const insets = useSafeAreaInsets();
+  const scale = useSharedValue(1);
+  const pinch = usePinchGesture({
+    onUpdate: (event) => {
+      scale.set(Math.min(5, Math.max(1, scale.get() * event.scaleChange)));
+    },
+  });
+  const imageStyle = useAnimatedStyle(() => ({
+    transform: [{ scale: scale.get() }],
+  }));
+
+  useEffect(() => {
+    if (visible) scale.set(1);
+  }, [scale, uri, visible]);
+
+  return (
+    <Modal
+      visible={visible && Boolean(uri)}
+      animationType="fade"
+      statusBarTranslucent
+      navigationBarTranslucent
+      onRequestClose={onClose}
+    >
+      <GestureHandlerRootView style={styles.viewer}>
+        <GestureDetector gesture={pinch}>
+          <Animated.View style={[styles.viewerImage, imageStyle]}>
+            {uri ? <Image source={{ uri }} style={styles.viewerImage} contentFit="contain" /> : null}
+          </Animated.View>
+        </GestureDetector>
+        <Pressable
+          accessibilityRole="button"
+          accessibilityLabel="Fechar visualização da fotografia"
+          style={[styles.viewerClose, { top: insets.top + 16, right: insets.right + 16 }]}
+          onPress={onClose}
+        >
+          <Text style={styles.viewerCloseText}>×</Text>
+        </Pressable>
+      </GestureHandlerRootView>
+    </Modal>
+  );
+}
+
 function PhotoField({ label, photo, onChange }: { label: string; photo: Photo; onChange: (p: Photo) => void }) {
   const uri = photo.tempUri ?? photoUri(photo.name);
+  const [viewerVisible, setViewerVisible] = useState(false);
 
   const pick = async (source: 'camera' | 'gallery') => {
     const opts: ImagePicker.ImagePickerOptions = { mediaTypes: ['images'], quality: 0.7 };
@@ -31,8 +78,8 @@ function PhotoField({ label, photo, onChange }: { label: string; photo: Photo; o
 
   const choose = () =>
     Alert.alert(label, undefined, [
-      { text: 'Câmera', onPress: () => pick('camera') },
-      { text: 'Galeria', onPress: () => pick('gallery') },
+      { text: uri ? 'Tirar outra foto' : 'Câmera', onPress: () => pick('camera') },
+      { text: uri ? 'Selecionar da galeria' : 'Galeria', onPress: () => pick('gallery') },
       ...(uri
         ? [{ text: 'Remover', style: 'destructive' as const, onPress: () => onChange({ name: null, tempUri: null }) }]
         : []),
@@ -42,14 +89,32 @@ function PhotoField({ label, photo, onChange }: { label: string; photo: Photo; o
   return (
     <View style={styles.photoBox}>
       <Text style={styles.label}>{label}</Text>
-      <Pressable onPress={choose} style={styles.photo}>
+      <Pressable
+        accessibilityRole="button"
+        accessibilityLabel={uri ? `Ampliar ${label.toLowerCase()}` : `Adicionar ${label.toLowerCase()}`}
+        onPress={uri ? () => setViewerVisible(true) : choose}
+        style={styles.photo}
+      >
         {uri ? (
           <Image source={{ uri }} style={StyleSheet.absoluteFill} contentFit="cover" />
         ) : (
           <Text style={styles.photoHint}>Toque para adicionar</Text>
         )}
       </Pressable>
-      {uri ? <Text style={styles.link} onPress={choose}>Substituir</Text> : null}
+      {uri ? (
+        <View style={styles.photoActions}>
+          <Text style={styles.link} onPress={choose}>Substituir</Text>
+          <Pressable
+            accessibilityRole="button"
+            accessibilityLabel={`Opções de ${label.toLowerCase()}`}
+            onPress={choose}
+            style={styles.photoOptions}
+          >
+            <Text style={styles.photoOptionsText}>⋯</Text>
+          </Pressable>
+        </View>
+      ) : null}
+      <PhotoViewer uri={uri} visible={viewerVisible} onClose={() => setViewerVisible(false)} />
     </View>
   );
 }
@@ -299,7 +364,20 @@ const styles = StyleSheet.create({
     alignItems: 'center', justifyContent: 'center',
   },
   photoHint: { color: colors.muted, fontSize: 13 },
-  link: { color: colors.primaryDark, marginTop: 4, textAlign: 'center', fontSize: 13 },
+  photoActions: { flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 8, marginTop: 4 },
+  link: { color: colors.primaryDark, textAlign: 'center', fontSize: 13 },
+  photoOptions: {
+    minWidth: 32, minHeight: 28, alignItems: 'center', justifyContent: 'center',
+    borderRadius: 14, backgroundColor: colors.border,
+  },
+  photoOptionsText: { color: colors.primaryDark, fontSize: 20, lineHeight: 22, fontWeight: '700' },
+  viewer: { flex: 1, backgroundColor: '#000', alignItems: 'center', justifyContent: 'center' },
+  viewerImage: { width: '100%', height: '100%' },
+  viewerClose: {
+    position: 'absolute', width: 44, height: 44, borderRadius: 22,
+    backgroundColor: '#333', alignItems: 'center', justifyContent: 'center',
+  },
+  viewerCloseText: { color: '#fff', fontSize: 32, lineHeight: 36 },
   chips: { flexDirection: 'row', flexWrap: 'wrap', gap: 8, marginBottom: 8 },
   chip: {
     paddingHorizontal: 14, paddingVertical: 8, borderRadius: 20, backgroundColor: colors.card,
