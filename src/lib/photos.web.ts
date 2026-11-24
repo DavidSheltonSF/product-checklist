@@ -10,3 +10,7 @@ export async function savePhoto(
 }
 
 export function deletePhoto(_name?: string | null) {}
+
+export function clearPhotos(): Promise<void> {
+  return Promise.resolve();
+}

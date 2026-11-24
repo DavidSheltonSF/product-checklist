@@ -26,3 +26,8 @@ export function deletePhoto(name?: string | null) {
     // arquivo órfão inofensivo
   }
 }
+
+export async function clearPhotos(): Promise<void> {
+  const dir = getPhotoDirectory();
+  if (dir.exists) dir.delete();
+}

@@ -2,10 +2,10 @@ import { Image } from 'expo-image';
 import { useFocusEffect, useRouter } from 'expo-router';
 import { useSQLiteContext } from 'expo-sqlite';
 import { useCallback, useState } from 'react';
-import { FlatList, Pressable, StyleSheet, Text, View } from 'react-native';
+import { Alert, FlatList, Pressable, StyleSheet, Text, View } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import type { Item } from '../lib/db';
-import { photoUri } from '../lib/photos';
+import { clearPhotos, photoUri } from '../lib/photos';
 import { deriveStatus, statusInfo } from '../lib/status';
 import { colors } from '../lib/theme';
 
@@ -25,6 +25,7 @@ export default function Home() {
   const router = useRouter();
   const insets = useSafeAreaInsets();
   const [items, setItems] = useState<Item[]>([]);
+  const [clearing, setClearing] = useState(false);
 
   useFocusEffect(
     useCallback(() => {
@@ -35,12 +36,56 @@ export default function Home() {
   const open = (id: number | 'new') =>
     router.push({ pathname: '/item/[id]', params: { id: String(id) } });
 
+  const clearList = async () => {
+    setClearing(true);
+    let photosCleared = false;
+    try {
+      await clearPhotos();
+      photosCleared = true;
+      await db.runAsync('DELETE FROM items');
+      setItems([]);
+    } catch {
+      Alert.alert(
+        'Erro',
+        photosCleared
+          ? 'As fotos foram removidas, mas não foi possível apagar os produtos. Tente novamente.'
+          : 'Não foi possível remover as fotos. Os produtos não foram apagados.',
+      );
+    } finally {
+      setClearing(false);
+    }
+  };
+
+  const confirmClearList = () =>
+    Alert.alert(
+      'Limpar lista?',
+      'Todos os produtos e as fotos associadas serão apagados. Esta ação não pode ser desfeita.',
+      [
+        { text: 'Cancelar', style: 'cancel' },
+        { text: 'Limpar Lista', style: 'destructive', onPress: () => void clearList() },
+      ],
+    );
+
   return (
     <View style={styles.container}>
       <FlatList
         data={items}
         keyExtractor={(i) => String(i.id)}
         contentContainerStyle={items.length ? styles.list : styles.emptyWrap}
+        ListHeaderComponent={
+          items.length > 0 ? (
+            <Pressable
+              style={[styles.clearButton, clearing && styles.clearButtonDisabled]}
+              onPress={confirmClearList}
+              disabled={clearing}
+              accessibilityRole="button"
+            >
+              <Text style={styles.clearButtonText}>
+                {clearing ? 'Limpando...' : 'Limpar Lista'}
+              </Text>
+            </Pressable>
+          ) : undefined
+        }
         ListEmptyComponent={
           <Text style={styles.empty}>
             Nenhum produto na checklist.{'\n'}Toque em “+” para adicionar.
@@ -78,6 +123,18 @@ const styles = StyleSheet.create({
   container: { flex: 1 },
   list: { padding: 12, gap: 10, paddingBottom: 100 },
   emptyWrap: { flexGrow: 1, justifyContent: 'center', alignItems: 'center' },
+  clearButton: {
+    alignSelf: 'flex-end',
+    marginBottom: 2,
+    paddingHorizontal: 14,
+    paddingVertical: 9,
+    borderRadius: 10,
+    borderWidth: 1,
+    borderColor: colors.danger,
+    backgroundColor: colors.card,
+  },
+  clearButtonDisabled: { opacity: 0.6 },
+  clearButtonText: { color: colors.danger, fontWeight: '600' },
   empty: { textAlign: 'center', color: colors.muted, fontSize: 16, lineHeight: 24 },
   card: {
     flexDirection: 'row', backgroundColor: colors.card, borderRadius: 14, padding: 10,
