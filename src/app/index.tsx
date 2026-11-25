@@ -1,13 +1,15 @@
 import { Image } from 'expo-image';
 import { useFocusEffect, useRouter } from 'expo-router';
 import { useSQLiteContext } from 'expo-sqlite';
-import { useCallback, useState } from 'react';
-import { Alert, FlatList, Pressable, StyleSheet, Text, View } from 'react-native';
+import { useCallback, useMemo, useState } from 'react';
+import { Alert, FlatList, Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import type { Item } from '../lib/db';
 import { clearPhotos, photoUri } from '../lib/photos';
-import { deriveStatus, statusInfo } from '../lib/status';
+import { deriveStatus, statusInfo, type Status } from '../lib/status';
 import { colors } from '../lib/theme';
+
+const statusOrder: Status[] = ['pending', 'partial', 'collected', 'absent'];
 
 function Thumb({ name }: { name: string | null }) {
   const uri = photoUri(name);
@@ -26,6 +28,28 @@ export default function Home() {
   const insets = useSafeAreaInsets();
   const [items, setItems] = useState<Item[]>([]);
   const [clearing, setClearing] = useState(false);
+  const [statusFilter, setStatusFilter] = useState<Status | 'all'>('all');
+
+  const statusCounts = useMemo(() => {
+    const counts: Record<Status, number> = {
+      collected: 0,
+      partial: 0,
+      pending: 0,
+      absent: 0,
+    };
+    items.forEach((item) => {
+      counts[deriveStatus(item)] += 1;
+    });
+    return counts;
+  }, [items]);
+
+  const filteredItems = useMemo(
+    () =>
+      statusFilter === 'all'
+        ? items
+        : items.filter((item) => deriveStatus(item) === statusFilter),
+    [items, statusFilter],
+  );
 
   useFocusEffect(
     useCallback(() => {
@@ -68,10 +92,40 @@ export default function Home() {
 
   return (
     <View style={styles.container}>
+      {items.length > 0 ? (
+        <View style={styles.filter}>
+          <Text style={styles.filterLabel}>Filtrar por status</Text>
+          <ScrollView
+            horizontal
+            showsHorizontalScrollIndicator={false}
+            contentContainerStyle={styles.filters}
+          >
+            {(['all', ...statusOrder] as const).map((filter) => {
+              const label = filter === 'all' ? 'Todos' : statusInfo[filter].label;
+              const count = filter === 'all' ? items.length : statusCounts[filter];
+              const selected = statusFilter === filter;
+              return (
+                <Pressable
+                  key={filter}
+                  style={[styles.filterChip, selected && styles.filterChipSelected]}
+                  onPress={() => setStatusFilter(filter)}
+                  accessibilityRole="button"
+                  accessibilityLabel={`${label}, ${count} ${count === 1 ? 'produto' : 'produtos'}`}
+                  accessibilityState={{ selected }}
+                >
+                  <Text style={[styles.filterChipText, selected && styles.filterChipTextSelected]}>
+                    {label} ({count})
+                  </Text>
+                </Pressable>
+              );
+            })}
+          </ScrollView>
+        </View>
+      ) : null}
       <FlatList
-        data={items}
+        data={filteredItems}
         keyExtractor={(i) => String(i.id)}
-        contentContainerStyle={items.length ? styles.list : styles.emptyWrap}
+        contentContainerStyle={filteredItems.length ? styles.list : styles.emptyWrap}
         ListHeaderComponent={
           items.length > 0 ? (
             <Pressable
@@ -87,9 +141,22 @@ export default function Home() {
           ) : undefined
         }
         ListEmptyComponent={
-          <Text style={styles.empty}>
-            Nenhum produto na checklist.{'\n'}Toque em “+” para adicionar.
-          </Text>
+          items.length === 0 ? (
+            <Text style={styles.empty}>
+              Nenhum produto na checklist.{'\n'}Toque em “+” para adicionar.
+            </Text>
+          ) : (
+            <View style={styles.emptyState}>
+              <Text style={styles.empty}>Nenhum produto com esse status.</Text>
+              <Pressable
+                onPress={() => setStatusFilter('all')}
+                accessibilityRole="button"
+                style={styles.resetFilterButton}
+              >
+                <Text style={styles.resetFilterText}>Ver todos</Text>
+              </Pressable>
+            </View>
+          )
         }
         renderItem={({ item }) => {
           const s = statusInfo[deriveStatus(item)];
@@ -121,8 +188,32 @@ export default function Home() {
 
 const styles = StyleSheet.create({
   container: { flex: 1 },
+  filter: { paddingTop: 10, paddingBottom: 4 },
+  filterLabel: {
+    color: colors.muted,
+    fontSize: 13,
+    fontWeight: '600',
+    marginHorizontal: 12,
+    marginBottom: 8,
+  },
+  filters: { paddingHorizontal: 12, gap: 8 },
+  filterChip: {
+    minHeight: 44,
+    justifyContent: 'center',
+    paddingHorizontal: 14,
+    borderRadius: 22,
+    borderWidth: 1,
+    borderColor: colors.border,
+    backgroundColor: colors.card,
+  },
+  filterChipSelected: { backgroundColor: colors.primary, borderColor: colors.primary },
+  filterChipText: { color: colors.text, fontSize: 14, fontWeight: '600' },
+  filterChipTextSelected: { color: '#fff' },
   list: { padding: 12, gap: 10, paddingBottom: 100 },
   emptyWrap: { flexGrow: 1, justifyContent: 'center', alignItems: 'center' },
+  emptyState: { alignItems: 'center', gap: 8 },
+  resetFilterButton: { minHeight: 44, justifyContent: 'center', paddingHorizontal: 12 },
+  resetFilterText: { color: colors.primaryDark, fontWeight: '600' },
   clearButton: {
     alignSelf: 'flex-end',
     marginBottom: 2,
