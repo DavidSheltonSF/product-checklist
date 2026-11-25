@@ -7,14 +7,11 @@ import { GestureDetector, GestureHandlerRootView, usePinchGesture } from 'react-
 import Animated, { useAnimatedStyle, useSharedValue } from 'react-native-reanimated';
 import { Alert, Modal, Pressable, ScrollView, StyleSheet, Text, TextInput, View } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
-import type { Item } from '../../lib/db';
+import type { Product } from '../../lib/db';
 import { deletePhoto, photoUri, savePhoto } from '../../lib/photos';
-import { deriveStatus, statusInfo } from '../../lib/status';
 import { colors } from '../../lib/theme';
 
-const UNITS = ['unidade', 'caixa', 'pacote', 'kit'];
 type Photo = { name: string | null; tempUri: string | null };
-const digits = (t: string) => t.replace(/\D/g, '');
 
 function PhotoViewer({ uri, visible, onClose }: { uri: string | null; visible: boolean; onClose: () => void }) {
   const insets = useSafeAreaInsets();
@@ -125,76 +122,31 @@ export default function ItemScreen() {
   const db = useSQLiteContext();
   const router = useRouter();
 
-  const [original, setOriginal] = useState<Item | null>(null);
+  const [original, setOriginal] = useState<Product | null>(null);
   const [name, setName] = useState('');
   const [importer, setImporter] = useState('');
   const [manufacturer, setManufacturer] = useState('');
   const [ref, setRef] = useState('');
-  const [requested, setRequested] = useState('');
-  const [found, setFound] = useState('0');
-  const [absent, setAbsent] = useState(false);
-  const [unitChoice, setUnitChoice] = useState('unidade');
-  const [customUnit, setCustomUnit] = useState('');
   const [product, setProduct] = useState<Photo>({ name: null, tempUri: null });
   const [reference, setReference] = useState<Photo>({ name: null, tempUri: null });
   const [saving, setSaving] = useState(false);
 
   useEffect(() => {
     if (isNew) return;
-    db.getFirstAsync<Item>('SELECT * FROM items WHERE id = ?', Number(id)).then((i) => {
+    db.getFirstAsync<Product>('SELECT * FROM products WHERE id = ?', Number(id)).then((i) => {
       if (!i) return;
       setOriginal(i);
       setName(i.name);
       setImporter(i.importer ?? '');
       setManufacturer(i.manufacturer ?? '');
       setRef(i.reference_code ?? '');
-      setRequested(String(i.requested_qty));
-      setFound(String(i.found_qty));
-      setAbsent(i.marked_absent === 1);
-      if (UNITS.includes(i.unit)) setUnitChoice(i.unit);
-      else {
-        setUnitChoice('outra');
-        setCustomUnit(i.unit);
-      }
       setProduct({ name: i.product_photo, tempUri: null });
       setReference({ name: i.reference_photo, tempUri: null });
     });
   }, [db, id, isNew]);
 
-  const requestedN = parseInt(requested, 10) || 0;
-  const foundN = parseInt(found, 10) || 0;
-  const status = deriveStatus({
-    requested_qty: requestedN,
-    found_qty: foundN,
-    marked_absent: absent ? 1 : 0,
-  });
-
-  const setFoundQty = (n: number) => {
-    const v = Math.max(0, n);
-    setFound(String(v));
-    if (v > 0) setAbsent(false);
-  };
-
-  const toggleAbsent = () => {
-    if (absent) return setAbsent(false);
-    const apply = () => {
-      setFound('0');
-      setAbsent(true);
-    };
-    if (foundN > 0) {
-      Alert.alert('Marcar como não encontrado?', 'A quantidade encontrada será zerada.', [
-        { text: 'Cancelar', style: 'cancel' },
-        { text: 'Confirmar', style: 'destructive', onPress: apply },
-      ]);
-    } else apply();
-  };
-
   const save = async () => {
-    const unit = (unitChoice === 'outra' ? customUnit : unitChoice).trim().replace(/\s+/g, ' ');
     if (!name.trim()) return Alert.alert('Atenção', 'Informe o nome do produto.');
-    if (requestedN <= 0) return Alert.alert('Atenção', 'A quantidade solicitada deve ser maior que zero.');
-    if (!unit) return Alert.alert('Atenção', 'Informe a unidade.');
-    const unitFinal = UNITS.find((u) => u.toLowerCase() === unit.toLowerCase()) ?? unit;
 
     setSaving(true);
     const created: string[] = [];
@@ -214,21 +166,17 @@ export default function ItemScreen() {
         ref.trim() || null,
         pName,
         rName,
-        requestedN,
-        unitFinal,
-        absent ? 0 : foundN,
-        absent ? 1 : 0,
       ];
       if (isNew) {
         await db.runAsync(
-          `INSERT INTO items (name, importer, manufacturer, reference_code, product_photo, reference_photo,
-           requested_qty, unit, found_qty, marked_absent) VALUES (?,?,?,?,?,?,?,?,?,?)`,
+          `INSERT INTO products (name, importer, manufacturer, reference_code, product_photo, reference_photo)
+           VALUES (?,?,?,?,?,?)`,
           vals,
         );
       } else {
         await db.runAsync(
-          `UPDATE items SET name=?, importer=?, manufacturer=?, reference_code=?, product_photo=?, reference_photo=?,
-           requested_qty=?, unit=?, found_qty=?, marked_absent=? WHERE id=?`,
+          `UPDATE products SET name=?, importer=?, manufacturer=?, reference_code=?, product_photo=?, reference_photo=?
+           WHERE id=?`,
           [...vals, Number(id)],
         );
         if (original?.product_photo && original.product_photo !== pName) deletePhoto(original.product_photo);
@@ -249,10 +197,17 @@ export default function ItemScreen() {
         text: 'Excluir',
         style: 'destructive',
         onPress: async () => {
-          await db.runAsync('DELETE FROM items WHERE id = ?', Number(id));
-          deletePhoto(original?.product_photo);
-          deletePhoto(original?.reference_photo);
-          router.back();
+          try {
+            await db.withTransactionAsync(async () => {
+              await db.runAsync('DELETE FROM collection_items WHERE product_id = ?', Number(id));
+              await db.runAsync('DELETE FROM products WHERE id = ?', Number(id));
+            });
+            deletePhoto(original?.product_photo);
+            deletePhoto(original?.reference_photo);
+            router.back();
+          } catch {
+            Alert.alert('Erro', 'Não foi possível excluir o produto.');
+          }
         },
       },
     ]);
@@ -274,68 +229,6 @@ export default function ItemScreen() {
       <TextInput style={styles.input} value={importer} onChangeText={setImporter} placeholder="Opcional" />
       <Text style={styles.label}>Fabricante</Text>
       <TextInput style={styles.input} value={manufacturer} onChangeText={setManufacturer} placeholder="Opcional" />
-
-      <Text style={styles.label}>Quantidade solicitada *</Text>
-      <TextInput
-        style={styles.input}
-        value={requested}
-        onChangeText={(t) => setRequested(digits(t))}
-        keyboardType="number-pad"
-        placeholder="0"
-      />
-
-      <Text style={styles.label}>Unidade *</Text>
-      <View style={styles.chips}>
-        {[...UNITS, 'outra'].map((u) => (
-          <Pressable key={u} onPress={() => setUnitChoice(u)} style={[styles.chip, unitChoice === u && styles.chipOn]}>
-            <Text style={[styles.chipText, unitChoice === u && styles.chipTextOn]}>
-              {u === 'outra' ? 'Outra…' : u}
-            </Text>
-          </Pressable>
-        ))}
-      </View>
-      {unitChoice === 'outra' && (
-        <TextInput
-          style={styles.input}
-          value={customUnit}
-          onChangeText={setCustomUnit}
-          placeholder="Ex.: fardo, rolo, saco"
-        />
-      )}
-
-      <View style={styles.foundCard}>
-        <Text style={styles.label}>Quantidade encontrada</Text>
-        <View style={styles.stepper}>
-          <Pressable style={styles.stepBtn} onPress={() => setFoundQty(foundN - 1)}>
-            <Text style={styles.stepText}>−</Text>
-          </Pressable>
-          <TextInput
-            style={[styles.input, styles.foundInput]}
-            value={found}
-            onChangeText={(t) => setFoundQty(parseInt(digits(t), 10) || 0)}
-            keyboardType="number-pad"
-          />
-          <Pressable style={styles.stepBtn} onPress={() => setFoundQty(foundN + 1)}>
-            <Text style={styles.stepText}>+</Text>
-          </Pressable>
-        </View>
-        <Text style={styles.unitText}>
-          {foundN} de {requestedN} {unitChoice === 'outra' ? customUnit : unitChoice}
-        </Text>
-        <View style={styles.row}>
-          <Pressable style={styles.secondary} onPress={() => setFoundQty(requestedN)}>
-            <Text style={styles.secondaryText}>Coletar tudo</Text>
-          </Pressable>
-          <Pressable style={[styles.secondary, absent && styles.secondaryOn]} onPress={toggleAbsent}>
-            <Text style={[styles.secondaryText, absent && styles.secondaryTextOn]}>
-              {absent ? 'Desmarcar ausente' : 'Não encontrado'}
-            </Text>
-          </Pressable>
-        </View>
-        <Text style={[styles.badge, { backgroundColor: statusInfo[status].color }]}>
-          {statusInfo[status].label}
-        </Text>
-      </View>
 
       <Pressable style={[styles.primary, saving && { opacity: 0.6 }]} onPress={save} disabled={saving}>
         <Text style={styles.primaryText}>Salvar</Text>
@@ -378,38 +271,6 @@ const styles = StyleSheet.create({
     backgroundColor: '#333', alignItems: 'center', justifyContent: 'center',
   },
   viewerCloseText: { color: '#fff', fontSize: 32, lineHeight: 36 },
-  chips: { flexDirection: 'row', flexWrap: 'wrap', gap: 8, marginBottom: 8 },
-  chip: {
-    paddingHorizontal: 14, paddingVertical: 8, borderRadius: 20, backgroundColor: colors.card,
-    borderWidth: 1, borderColor: colors.border,
-  },
-  chipOn: { backgroundColor: colors.primary, borderColor: colors.primary },
-  chipText: { color: colors.text },
-  chipTextOn: { color: '#fff', fontWeight: '600' },
-  foundCard: {
-    marginTop: 20, padding: 14, borderRadius: 14, backgroundColor: '#EAF4FC',
-    borderWidth: 1, borderColor: colors.border,
-  },
-  stepper: { flexDirection: 'row', alignItems: 'center', gap: 10 },
-  stepBtn: {
-    width: 52, height: 52, borderRadius: 26, backgroundColor: colors.primary,
-    alignItems: 'center', justifyContent: 'center',
-  },
-  stepText: { color: '#fff', fontSize: 28, marginTop: -2 },
-  foundInput: { flex: 1, textAlign: 'center', fontSize: 22, fontWeight: '700' },
-  unitText: { textAlign: 'center', color: colors.text, marginTop: 8 },
-  row: { flexDirection: 'row', gap: 10, marginTop: 12 },
-  secondary: {
-    flex: 1, paddingVertical: 12, borderRadius: 10, borderWidth: 1, borderColor: colors.primary,
-    alignItems: 'center', backgroundColor: colors.card,
-  },
-  secondaryOn: { backgroundColor: colors.danger, borderColor: colors.danger },
-  secondaryText: { color: colors.primaryDark, fontWeight: '600' },
-  secondaryTextOn: { color: '#fff' },
-  badge: {
-    alignSelf: 'center', color: '#fff', fontWeight: '700', paddingHorizontal: 14,
-    paddingVertical: 4, borderRadius: 10, overflow: 'hidden', marginTop: 12,
-  },
   primary: { marginTop: 24, backgroundColor: colors.primary, paddingVertical: 16, borderRadius: 12, alignItems: 'center' },
   primaryText: { color: '#fff', fontSize: 17, fontWeight: '700' },
   deleteBtn: { marginTop: 14, alignItems: 'center', padding: 10 },

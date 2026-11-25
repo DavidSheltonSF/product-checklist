@@ -1,4 +1,4 @@
-import type { Item } from './db';
+import type { CollectionEntry, Product } from './db';
 
 export function normalizeSearchText(value: string): string {
   return value
@@ -43,7 +43,7 @@ function isFuzzyMatch(term: string, value: string): boolean {
     });
 }
 
-export function matchesSearch(item: Item, query: string): boolean {
+export function matchesSearch(item: Product | CollectionEntry, query: string): boolean {
   const normalizedQuery = normalizeSearchText(query);
   if (!normalizedQuery) return true;
 
@@ -53,7 +53,7 @@ export function matchesSearch(item: Item, query: string): boolean {
     item.reference_code,
     item.importer,
     item.manufacturer,
-    item.unit,
+    'unit' in item ? item.unit : null,
   ];
   const normalizedFields = fields
     .filter((value): value is string => Boolean(value))

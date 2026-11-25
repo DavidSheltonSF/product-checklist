@@ -1,8 +1,9 @@
 import { colors } from './theme';
+import type { CollectionEntry } from './db';
 
 export type Status = 'collected' | 'partial' | 'pending' | 'absent';
 
-export function deriveStatus(i: { requested_qty: number; found_qty: number; marked_absent: number }): Status {
+export function deriveStatus(i: Pick<CollectionEntry, 'requested_qty' | 'found_qty' | 'marked_absent'>): Status {
   if (i.found_qty >= i.requested_qty) return 'collected';
   if (i.found_qty > 0) return 'partial';
   return i.marked_absent ? 'absent' : 'pending';

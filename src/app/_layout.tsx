@@ -15,8 +15,9 @@ export default function RootLayout() {
           contentStyle: { backgroundColor: colors.bg },
         }}
       >
-        <Stack.Screen name="index" options={{ title: 'Checklist' }} />
+        <Stack.Screen name="index" options={{ title: 'Produtos e coleta' }} />
         <Stack.Screen name="item/[id]" options={{ title: 'Produto' }} />
+        <Stack.Screen name="collect/[id]" options={{ title: 'Coleta do produto' }} />
       </Stack>
     </SQLiteProvider>
   );
