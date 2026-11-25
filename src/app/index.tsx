@@ -2,10 +2,11 @@ import { Image } from 'expo-image';
 import { useFocusEffect, useRouter } from 'expo-router';
 import { useSQLiteContext } from 'expo-sqlite';
 import { useCallback, useMemo, useState } from 'react';
-import { Alert, FlatList, Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
+import { Alert, FlatList, Keyboard, Pressable, ScrollView, StyleSheet, Text, TextInput, View } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import type { Item } from '../lib/db';
 import { clearPhotos, photoUri } from '../lib/photos';
+import { matchesSearch } from '../lib/search';
 import { deriveStatus, statusInfo, type Status } from '../lib/status';
 import { colors } from '../lib/theme';
 
@@ -29,6 +30,8 @@ export default function Home() {
   const [items, setItems] = useState<Item[]>([]);
   const [clearing, setClearing] = useState(false);
   const [statusFilter, setStatusFilter] = useState<Status | 'all'>('all');
+  const [searchQuery, setSearchQuery] = useState('');
+  const [searchFocused, setSearchFocused] = useState(false);
 
   const statusCounts = useMemo(() => {
     const counts: Record<Status, number> = {
@@ -43,13 +46,21 @@ export default function Home() {
     return counts;
   }, [items]);
 
-  const filteredItems = useMemo(
-    () =>
+  const filteredItems = useMemo(() => {
+    const statusMatches =
       statusFilter === 'all'
         ? items
-        : items.filter((item) => deriveStatus(item) === statusFilter),
-    [items, statusFilter],
-  );
+        : items.filter((item) => deriveStatus(item) === statusFilter);
+    return statusMatches.filter((item) => matchesSearch(item, searchQuery));
+  }, [items, statusFilter, searchQuery]);
+
+  const hasSearch = searchQuery.trim().length > 0;
+  const clearSearch = () => setSearchQuery('');
+
+  const clearAllFilters = () => {
+    setSearchQuery('');
+    setStatusFilter('all');
+  };
 
   useFocusEffect(
     useCallback(() => {
@@ -68,6 +79,8 @@ export default function Home() {
       photosCleared = true;
       await db.runAsync('DELETE FROM items');
       setItems([]);
+      setSearchQuery('');
+      setStatusFilter('all');
     } catch {
       Alert.alert(
         'Erro',
@@ -93,34 +106,70 @@ export default function Home() {
   return (
     <View style={styles.container}>
       {items.length > 0 ? (
-        <View style={styles.filter}>
-          <Text style={styles.filterLabel}>Filtrar por status</Text>
-          <ScrollView
-            horizontal
-            showsHorizontalScrollIndicator={false}
-            contentContainerStyle={styles.filters}
-          >
-            {(['all', ...statusOrder] as const).map((filter) => {
-              const label = filter === 'all' ? 'Todos' : statusInfo[filter].label;
-              const count = filter === 'all' ? items.length : statusCounts[filter];
-              const selected = statusFilter === filter;
-              return (
-                <Pressable
-                  key={filter}
-                  style={[styles.filterChip, selected && styles.filterChipSelected]}
-                  onPress={() => setStatusFilter(filter)}
-                  accessibilityRole="button"
-                  accessibilityLabel={`${label}, ${count} ${count === 1 ? 'produto' : 'produtos'}`}
-                  accessibilityState={{ selected }}
-                >
-                  <Text style={[styles.filterChipText, selected && styles.filterChipTextSelected]}>
-                    {label} ({count})
-                  </Text>
-                </Pressable>
-              );
-            })}
-          </ScrollView>
-        </View>
+        <>
+          <View style={[styles.searchBox, searchFocused && styles.searchBoxFocused]}>
+            <TextInput
+              value={searchQuery}
+              onChangeText={setSearchQuery}
+              style={styles.searchInput}
+              placeholder="Buscar nome, referência, fabricante..."
+              placeholderTextColor={colors.muted}
+              accessibilityLabel="Pesquisar produtos"
+              autoCapitalize="none"
+              autoCorrect={false}
+              returnKeyType="search"
+              onFocus={() => setSearchFocused(true)}
+              onBlur={() => setSearchFocused(false)}
+              onSubmitEditing={Keyboard.dismiss}
+            />
+            {hasSearch ? (
+              <Pressable
+                onPress={clearSearch}
+                accessibilityRole="button"
+                accessibilityLabel="Limpar pesquisa"
+                style={styles.clearSearchButton}
+              >
+                <Text style={styles.clearSearchText}>×</Text>
+              </Pressable>
+            ) : null}
+          </View>
+          {hasSearch ? (
+            <Text
+              accessibilityLiveRegion="polite"
+              style={styles.resultCount}
+            >
+              {filteredItems.length} {filteredItems.length === 1 ? 'produto encontrado' : 'produtos encontrados'}
+            </Text>
+          ) : null}
+          <View style={styles.filter}>
+            <Text style={styles.filterLabel}>Filtrar por status</Text>
+            <ScrollView
+              horizontal
+              showsHorizontalScrollIndicator={false}
+              contentContainerStyle={styles.filters}
+            >
+              {(['all', ...statusOrder] as const).map((filter) => {
+                const label = filter === 'all' ? 'Todos' : statusInfo[filter].label;
+                const count = filter === 'all' ? items.length : statusCounts[filter];
+                const selected = statusFilter === filter;
+                return (
+                  <Pressable
+                    key={filter}
+                    style={[styles.filterChip, selected && styles.filterChipSelected]}
+                    onPress={() => setStatusFilter(filter)}
+                    accessibilityRole="button"
+                    accessibilityLabel={`${label}, ${count} ${count === 1 ? 'produto' : 'produtos'}`}
+                    accessibilityState={{ selected }}
+                  >
+                    <Text style={[styles.filterChipText, selected && styles.filterChipTextSelected]}>
+                      {label} ({count})
+                    </Text>
+                  </Pressable>
+                );
+              })}
+            </ScrollView>
+          </View>
+        </>
       ) : null}
       <FlatList
         data={filteredItems}
@@ -145,6 +194,18 @@ export default function Home() {
             <Text style={styles.empty}>
               Nenhum produto na checklist.{'\n'}Toque em “+” para adicionar.
             </Text>
+          ) : hasSearch ? (
+            <View style={styles.emptyState}>
+              <Text style={styles.empty}>Nenhum produto encontrado.</Text>
+              <Text style={styles.emptyHint}>Tente outro nome, referência ou fabricante.</Text>
+              <Pressable
+                onPress={clearAllFilters}
+                accessibilityRole="button"
+                style={styles.resetFilterButton}
+              >
+                <Text style={styles.resetFilterText}>Limpar busca e filtros</Text>
+              </Pressable>
+            </View>
           ) : (
             <View style={styles.emptyState}>
               <Text style={styles.empty}>Nenhum produto com esse status.</Text>
@@ -188,6 +249,45 @@ export default function Home() {
 
 const styles = StyleSheet.create({
   container: { flex: 1 },
+  searchBox: {
+    height: 48,
+    marginHorizontal: 12,
+    marginTop: 10,
+    marginBottom: 2,
+    flexDirection: 'row',
+    alignItems: 'center',
+    borderRadius: 12,
+    borderWidth: 1,
+    borderColor: colors.border,
+    backgroundColor: colors.card,
+  },
+  searchBoxFocused: {
+    borderColor: colors.primary,
+  },
+  searchInput: {
+    flex: 1,
+    height: '100%',
+    paddingHorizontal: 14,
+    color: colors.text,
+    fontSize: 16,
+  },
+  clearSearchButton: {
+    width: 44,
+    height: 44,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  clearSearchText: {
+    color: colors.muted,
+    fontSize: 24,
+    lineHeight: 26,
+  },
+  resultCount: {
+    marginHorizontal: 12,
+    marginTop: 6,
+    color: colors.muted,
+    fontSize: 13,
+  },
   filter: { paddingTop: 10, paddingBottom: 4 },
   filterLabel: {
     color: colors.muted,
@@ -212,6 +312,7 @@ const styles = StyleSheet.create({
   list: { padding: 12, gap: 10, paddingBottom: 100 },
   emptyWrap: { flexGrow: 1, justifyContent: 'center', alignItems: 'center' },
   emptyState: { alignItems: 'center', gap: 8 },
+  emptyHint: { textAlign: 'center', color: colors.muted, fontSize: 14 },
   resetFilterButton: { minHeight: 44, justifyContent: 'center', paddingHorizontal: 12 },
   resetFilterText: { color: colors.primaryDark, fontWeight: '600' },
   clearButton: {
