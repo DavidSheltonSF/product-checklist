@@ -18,6 +18,7 @@ export default function CollectProductScreen() {
   const [product, setProduct] = useState<Product | null>(null);
   const [existing, setExisting] = useState<CollectionItem | null>(null);
   const [requested, setRequested] = useState('');
+  const [observation, setObservation] = useState('');
   const [unitChoice, setUnitChoice] = useState('unidade');
   const [customUnit, setCustomUnit] = useState('');
   const [found, setFound] = useState('0');
@@ -47,6 +48,7 @@ export default function CollectProductScreen() {
         setExisting(collectionRow ?? null);
         if (collectionRow) {
           setRequested(String(collectionRow.requested_qty));
+          setObservation(collectionRow.observation ?? '');
           if (UNITS.includes(collectionRow.unit)) setUnitChoice(collectionRow.unit);
           else {
             setUnitChoice('outra');
@@ -116,14 +118,15 @@ export default function CollectProductScreen() {
     setSaving(true);
     try {
       await db.runAsync(
-        `INSERT INTO collection_items (product_id, requested_qty, unit, found_qty, marked_absent)
-         VALUES (?, ?, ?, ?, ?)
+        `INSERT INTO collection_items (product_id, requested_qty, observation, unit, found_qty, marked_absent)
+         VALUES (?, ?, ?, ?, ?, ?)
          ON CONFLICT(product_id) DO UPDATE SET
            requested_qty = excluded.requested_qty,
+           observation = excluded.observation,
            unit = excluded.unit,
            found_qty = excluded.found_qty,
            marked_absent = excluded.marked_absent`,
-        [Number(id), requestedN, unitFinal, absent ? 0 : foundN, absent ? 1 : 0],
+        [Number(id), requestedN, observation, unitFinal, absent ? 0 : foundN, absent ? 1 : 0],
       );
       router.back();
     } catch {
@@ -181,6 +184,15 @@ export default function CollectProductScreen() {
         keyboardType="number-pad"
         placeholder="0"
         accessibilityLabel="Quantidade necessária"
+      />
+
+      <Text style={styles.label}>Observação</Text>
+      <TextInput
+        value={observation}
+        onChangeText={setObservation}
+        multiline
+        numberOfLines={4}
+        style={styles.textArea}
       />
 
       <Text style={styles.label}>Unidade *</Text>
@@ -301,6 +313,18 @@ const styles = StyleSheet.create({
     paddingVertical: 10,
     fontSize: 16,
     color: colors.text,
+  },
+  textArea: {
+    backgroundColor: colors.card,
+    borderWidth: 1,
+    borderColor: colors.border,
+    borderRadius: 10,
+    paddingHorizontal: 12,
+    paddingVertical: 10,
+    fontSize:16,
+    color: colors.text,
+    height: 100,
+    textAlignVertical:  'top'
   },
   chips: { flexDirection: 'row', flexWrap: 'wrap', gap: 8, marginBottom: 8 },
   chip: {
